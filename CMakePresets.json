@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "PSn00bSDK Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "toolchainFile": "$env{PSN00BSDK_LIBS}/cmake/sdk.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PSN00BSDK_TARGET": "mipsel-none-elf"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "release", "configurePreset": "default" }
+  ]
+}
