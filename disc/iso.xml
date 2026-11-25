@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iso_project image_name="ps3_system_355.bin" cue_sheet="ps3_system_355.cue">
+  <track type="data">
+    <identifiers system="PLAYSTATION" application="PLAYSTATION"
+      volume="PS3SYS355" volume_set="PS3SYS355" publisher="YES7USER"/>
+    <directory_tree>
+      <file name="SYSTEM.CNF" type="data" source="${PROJECT_SOURCE_DIR}/disc/system.cnf"/>
+      <file name="PS3SYS.EXE" type="data" source="${PROJECT_BINARY_DIR}/ps3system.exe"/>
+      <dummy sectors="512"/>
+    </directory_tree>
+  </track>
+</iso_project>
