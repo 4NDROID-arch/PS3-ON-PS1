@@ -4,7 +4,7 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "PSn00bSDK Release",
+      "displayName": "PSn00bSDK v0.24",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "toolchainFile": "$env{PSN00BSDK_LIBS}/cmake/sdk.cmake",

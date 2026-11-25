@@ -1,0 +1,6 @@
+build/
+CMakeUserPresets.json
+*.elf
+*.exe
+*.bin
+*.cue
