@@ -1,0 +1,65 @@
+name: Build PS1 ISO
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build curl jq unzip
+
+      - name: Download PSn00bSDK release
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/Lameguy64/PSn00bSDK/releases/latest"
+          URL="$(curl -fsSL "$API" | jq -r '.assets[] | select(.name | test("Linux.*zip$"; "i")) | .browser_download_url' | head -n 1)"
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "Could not find a Linux ZIP asset in the latest PSn00bSDK release."
+            echo "Check https://github.com/Lameguy64/PSn00bSDK/releases and update this workflow's asset filter."
+            exit 1
+          fi
+          mkdir -p "$HOME/psn00bsdk"
+          curl -fL "$URL" -o "$HOME/psn00bsdk/sdk.zip"
+          unzip -q "$HOME/psn00bsdk/sdk.zip" -d "$HOME/psn00bsdk/unpacked"
+          BIN="$(find "$HOME/psn00bsdk/unpacked" -type d -name bin | head -n 1)"
+          LIB="$(find "$HOME/psn00bsdk/unpacked" -type f -path '*/lib/libpsn00b/cmake/sdk.cmake' | head -n 1)"
+          if [ -z "$BIN" ] || [ -z "$LIB" ]; then
+            echo "SDK archive layout did not contain bin/ and lib/libpsn00b/cmake/sdk.cmake."
+            find "$HOME/psn00bsdk/unpacked" -maxdepth 4 -type f | head -n 80
+            exit 1
+          fi
+          SDKROOT="$(dirname "$(dirname "$(dirname "$(dirname "$LIB")")")")"
+          echo "$BIN" >> "$GITHUB_PATH"
+          LIBROOT="$(dirname "$(dirname "$LIB")")"
+          echo "PSN00BSDK_LIBS=$LIBROOT" >> "$GITHUB_ENV"
+          echo "SDK_BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Verify disc image
+        run: |
+          test -f build/ps3_system_355.bin
+          test -f build/ps3_system_355.cue
+
+      - name: Upload PS1 disc
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS3-System-3.55-PS1
+          path: |
+            build/ps3_system_355.bin
+            build/ps3_system_355.cue
+            build/ps3system.exe
+            
