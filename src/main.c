@@ -1,12 +1,14 @@
-#include <sys/types.h>
-#include <libgte.h>
-#include <libgpu.h>
-#include <libetc.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <psxetc.h>
+#include <psxgpu.h>
+#include <psxpad.h>
+
 #define SCREEN_W 320
 #define SCREEN_H 240
+
 #define CATEGORY_COUNT 6
 #define ITEM_COUNT 5
 
@@ -19,7 +21,14 @@ typedef enum {
 
 static DISPENV disp[2];
 static DRAWENV draw[2];
+static char pad_buffer[2][34];
+
 static int db = 0;
+static int page = PAGE_BOOT;
+static int category = 5;
+static int selection = 0;
+static int previous_category = 5;
+static int debounce = 0;
 
 static const char *categories[CATEGORY_COUNT] = {
     "USERS", "SETTINGS", "PHOTOS", "MUSIC", "VIDEO", "GAMES"
@@ -34,124 +43,142 @@ static const char *items[CATEGORY_COUNT][ITEM_COUNT] = {
     {"Game Library", "Start Demo Tile", "Memory Card (PS1)", "Disc Information", "Back"}
 };
 
-static int category = 5;
-static int selection = 0;
-static int previous_category = 5;
-static Page page = PAGE_BOOT;
-static int user_selected = 0;
-static int debounce = 0;
-static int font_id = -1;
-
-static void init_video(void) {
+static void init_system(void) {
     ResetGraph(0);
-    PadInit(0);
 
     SetDefDispEnv(&disp[0], 0, 0, SCREEN_W, SCREEN_H);
     SetDefDispEnv(&disp[1], 0, SCREEN_H, SCREEN_W, SCREEN_H);
+
     SetDefDrawEnv(&draw[0], 0, SCREEN_H, SCREEN_W, SCREEN_H);
     SetDefDrawEnv(&draw[1], 0, 0, SCREEN_W, SCREEN_H);
 
-    setRGB0(&draw[0], 4, 10, 28);
-    setRGB0(&draw[1], 4, 10, 28);
+    setRGB0(&draw[0], 5, 14, 38);
+    setRGB0(&draw[1], 5, 14, 38);
     draw[0].isbg = 1;
     draw[1].isbg = 1;
 
-    PutDispEnv(&disp[db]);
-    PutDrawEnv(&draw[db]);
-    SetDispMask(1);
-
     FntLoad(960, 0);
-    font_id = FntOpen(8, 8, 304, 220, 0, 1024);
+    FntOpen(8, 8, 304, 220, 0, 1024);
+
+    EnterCriticalSection();
+    InitPAD(pad_buffer[0], 34, pad_buffer[1], 34);
+    StartPAD();
+    ChangeClearPAD(0);
+    ExitCriticalSection();
+
+    PutDispEnv(&disp[0]);
+    PutDrawEnv(&draw[0]);
+    SetDispMask(1);
 }
 
-static void draw_frame(void) {
-    DrawSync(0);
-    VSync(0);
-    PutDispEnv(&disp[db]);
-    PutDrawEnv(&draw[db]);
-    SetDispMask(1);
-    FntFlush(-1);
-    db ^= 1;
+static PADTYPE *read_pad(void) {
+    PADTYPE *pad = (PADTYPE *)pad_buffer[0];
+
+    if (pad->stat != 0) {
+        return 0;
+    }
+
+    /* 0x4, 0x5 and 0x7 are digital/analog controller types. */
+    if (pad->type != 0x4 && pad->type != 0x5 && pad->type != 0x7) {
+        return 0;
+    }
+
+    return pad;
+}
+
+static int pressed(PADTYPE *pad, uint16_t button) {
+    /* PS1 controller button bits are active-low. */
+    return pad && !(pad->btn & button);
 }
 
 static void draw_boot(void) {
-    FntPrint(font_id, "\n\n\n");
-    FntPrint(font_id, "                 PLAYSTATION\n\n");
-    FntPrint(font_id, "          SYSTEM EXPERIENCE 3.55\n\n\n");
-    FntPrint(font_id, "          Press START to continue\n\n");
-    FntPrint(font_id, "       PS1 HOMEbrew interface simulation");
+    FntPrint(-1, "\n\n\n");
+    FntPrint(-1, "              PLAYSTATION\n\n");
+    FntPrint(-1, "        SYSTEM EXPERIENCE 3.55\n\n\n");
+    FntPrint(-1, "        Press START or CROSS\n\n");
+    FntPrint(-1, "       Local PS1 interface demo");
 }
 
 static void draw_user(void) {
-    FntPrint(font_id, "USER SELECTION\n");
-    FntPrint(font_id, "------------------------------------------------\n\n");
-    FntPrint(font_id, "                 > Guest\n\n");
-    FntPrint(font_id, "                   Create local user\n\n");
-    FntPrint(font_id, "                   Switch user\n\n\n");
-    FntPrint(font_id, "          CROSS: Select       CIRCLE: Back\n");
+    FntPrint(-1, "USER SELECTION\n");
+    FntPrint(-1, "----------------------------------------\n\n");
+    FntPrint(-1, "                 > Guest\n\n");
+    FntPrint(-1, "                   Create local user\n\n");
+    FntPrint(-1, "                   Switch user\n\n\n");
+    FntPrint(-1, "          CROSS: Select  CIRCLE: Back\n");
 }
 
 static void draw_xmb(void) {
     int i;
-    FntPrint(font_id, "PS3 SYSTEM 3.55                         09:41\n");
-    FntPrint(font_id, "------------------------------------------------\n\n");
+
+    FntPrint(-1, "PS3 SYSTEM 3.55                    USER: Guest\n");
+    FntPrint(-1, "-----------------------------------------------\n\n");
 
     for (i = 0; i < CATEGORY_COUNT; i++) {
-        if (i == category) FntPrint(font_id, "  [%s]  ", categories[i]);
-        else FntPrint(font_id, "   %s   ", categories[i]);
+        if (i == category) {
+            FntPrint(-1, " [%s] ", categories[i]);
+        } else {
+            FntPrint(-1, "  %s  ", categories[i]);
+        }
     }
 
-    FntPrint(font_id, "\n\n\n");
+    FntPrint(-1, "\n\n\n");
+
     for (i = 0; i < ITEM_COUNT; i++) {
-        if (i == selection) FntPrint(font_id, "          > %s\n\n", items[category][i]);
-        else FntPrint(font_id, "            %s\n\n", items[category][i]);
+        if (i == selection) {
+            FntPrint(-1, "          > %s\n\n", items[category][i]);
+        } else {
+            FntPrint(-1, "            %s\n\n", items[category][i]);
+        }
     }
 
-    FntPrint(font_id, "\n\n");
-    FntPrint(font_id, "D-PAD: Navigate   CROSS: Open   CIRCLE: Back\n");
-    FntPrint(font_id, "Local user: Guest                 XMB prototype");
+    FntPrint(-1, "\nD-PAD: Navigate  CROSS: Open  CIRCLE: Back\n");
+    FntPrint(-1, "             XMB INTERFACE SIMULATION");
 }
 
 static void draw_detail(void) {
-    FntPrint(font_id, "\n\n");
-    FntPrint(font_id, "                  %s\n\n", items[previous_category][selection]);
-    FntPrint(font_id, "------------------------------------------------\n\n");
-    FntPrint(font_id, "       This page is a local interface demo.\n\n");
-    FntPrint(font_id, "       Online services and real browser are\n");
-    FntPrint(font_id, "       not available in this PS1 simulation.\n\n\n");
-    FntPrint(font_id, "       Press CIRCLE to return to XMB.");
+    FntPrint(-1, "\n\n");
+    FntPrint(-1, "             %s\n\n", items[previous_category][selection]);
+    FntPrint(-1, "-----------------------------------------------\n\n");
+    FntPrint(-1, "       This is a local interface simulation.\n\n");
+    FntPrint(-1, "       Online services and a real browser\n");
+    FntPrint(-1, "       are not available in this PS1 demo.\n\n\n");
+    FntPrint(-1, "       Press CIRCLE to return to XMB.");
 }
 
 static void update_input(void) {
-    unsigned long pad = PadRead(0);
+    PADTYPE *pad = read_pad();
 
     if (debounce > 0) {
         debounce--;
         return;
     }
 
+    if (!pad) {
+        return;
+    }
+
     if (page == PAGE_BOOT) {
-        if (pad & (PADstart | PADcross)) {
+        if (pressed(pad, PAD_START) || pressed(pad, PAD_CROSS)) {
             page = PAGE_USER;
-            debounce = 15;
+            debounce = 12;
         }
         return;
     }
 
     if (page == PAGE_USER) {
-        if (pad & (PADcross | PADstart)) {
-            user_selected = 1;
+        if (pressed(pad, PAD_CROSS) || pressed(pad, PAD_START)) {
             page = PAGE_XMB;
-            debounce = 15;
-        } else if (pad & PADcircle) {
+            debounce = 12;
+        } else if (pressed(pad, PAD_CIRCLE)) {
             page = PAGE_BOOT;
-            debounce = 15;
+            debounce = 12;
         }
         return;
     }
 
     if (page == PAGE_DETAIL) {
-        if (pad & PADcircle) {
+        if (pressed(pad, PAD_CIRCLE)) {
             page = PAGE_XMB;
             debounce = 12;
         }
@@ -159,46 +186,69 @@ static void update_input(void) {
     }
 
     if (page == PAGE_XMB) {
-        if (pad & PADleft) {
+        if (pressed(pad, PAD_LEFT)) {
             category = (category + CATEGORY_COUNT - 1) % CATEGORY_COUNT;
             selection = 0;
-            debounce = 10;
-        } else if (pad & PADright) {
+            debounce = 8;
+        } else if (pressed(pad, PAD_RIGHT)) {
             category = (category + 1) % CATEGORY_COUNT;
             selection = 0;
-            debounce = 10;
-        } else if (pad & PADup) {
+            debounce = 8;
+        } else if (pressed(pad, PAD_UP)) {
             selection = (selection + ITEM_COUNT - 1) % ITEM_COUNT;
-            debounce = 10;
-        } else if (pad & PADdown) {
+            debounce = 8;
+        } else if (pressed(pad, PAD_DOWN)) {
             selection = (selection + 1) % ITEM_COUNT;
-            debounce = 10;
-        } else if (pad & PADcross) {
+            debounce = 8;
+        } else if (pressed(pad, PAD_CROSS)) {
             previous_category = category;
             if (selection == ITEM_COUNT - 1) {
                 page = PAGE_USER;
             } else {
                 page = PAGE_DETAIL;
             }
-            debounce = 15;
-        } else if (pad & PADcircle) {
+            debounce = 12;
+        } else if (pressed(pad, PAD_CIRCLE)) {
             page = PAGE_USER;
-            debounce = 15;
+            debounce = 12;
         }
     }
 }
 
+static void draw_frame(void) {
+    DrawSync(0);
+    VSync(0);
+
+    PutDispEnv(&disp[db]);
+    PutDrawEnv(&draw[db]);
+    SetDispMask(1);
+
+    FntFlush(-1);
+    db ^= 1;
+}
+
 int main(void) {
-    init_video();
+    init_system();
 
     while (1) {
         update_input();
 
         switch (page) {
-            case PAGE_BOOT:   draw_boot(); break;
-            case PAGE_USER:   draw_user(); break;
-            case PAGE_XMB:    draw_xmb(); break;
-            case PAGE_DETAIL: draw_detail(); break;
+            case PAGE_BOOT:
+                draw_boot();
+                break;
+            case PAGE_USER:
+                draw_user();
+                break;
+            case PAGE_XMB:
+                draw_xmb();
+                break;
+            case PAGE_DETAIL:
+                draw_detail();
+                break;
+            default:
+                page = PAGE_BOOT;
+                break;
         }
 
         draw_frame();
