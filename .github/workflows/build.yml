@@ -1,4 +1,4 @@
-name: Build PS1 ISO
+name: Build PS1 Disc
 
 on:
   push:
@@ -8,40 +8,56 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout project
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build curl jq unzip
+          sudo apt-get install -y cmake ninja-build curl unzip
 
-      - name: Download PSn00bSDK release
+      - name: Download official PSn00bSDK v0.24 package
         shell: bash
         run: |
           set -euo pipefail
-          API="https://api.github.com/repos/Lameguy64/PSn00bSDK/releases/latest"
-          URL="$(curl -fsSL "$API" | jq -r '.assets[] | select(.name | test("Linux.*zip$"; "i")) | .browser_download_url' | head -n 1)"
-          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
-            echo "Could not find a Linux ZIP asset in the latest PSn00bSDK release."
-            echo "Check https://github.com/Lameguy64/PSn00bSDK/releases and update this workflow's asset filter."
-            exit 1
-          fi
+          SDK_URL="https://github.com/Lameguy64/PSn00bSDK/releases/download/v0.24/PSn00bSDK-0.24-Linux.zip"
           mkdir -p "$HOME/psn00bsdk"
-          curl -fL "$URL" -o "$HOME/psn00bsdk/sdk.zip"
+          curl -fL "$SDK_URL" -o "$HOME/psn00bsdk/sdk.zip"
           unzip -q "$HOME/psn00bsdk/sdk.zip" -d "$HOME/psn00bsdk/unpacked"
-          BIN="$(find "$HOME/psn00bsdk/unpacked" -type d -name bin | head -n 1)"
-          LIB="$(find "$HOME/psn00bsdk/unpacked" -type f -path '*/lib/libpsn00b/cmake/sdk.cmake' | head -n 1)"
-          if [ -z "$BIN" ] || [ -z "$LIB" ]; then
-            echo "SDK archive layout did not contain bin/ and lib/libpsn00b/cmake/sdk.cmake."
-            find "$HOME/psn00bsdk/unpacked" -maxdepth 4 -type f | head -n 80
+
+          SDK_CMAKE="$(find "$HOME/psn00bsdk/unpacked" -type f -path '*/lib/libpsn00b/cmake/sdk.cmake' -print -quit)"
+          if [ -z "$SDK_CMAKE" ]; then
+            echo "::error::The official SDK archive was downloaded, but lib/libpsn00b/cmake/sdk.cmake was not found."
+            echo "Archive contents:"
+            find "$HOME/psn00bsdk/unpacked" -maxdepth 5 -type f | head -n 150
             exit 1
           fi
-          SDKROOT="$(dirname "$(dirname "$(dirname "$(dirname "$LIB")")")")"
-          echo "$BIN" >> "$GITHUB_PATH"
-          LIBROOT="$(dirname "$(dirname "$LIB")")"
-          echo "PSN00BSDK_LIBS=$LIBROOT" >> "$GITHUB_ENV"
-          echo "SDK_BIN=$BIN" >> "$GITHUB_ENV"
+
+          SDK_LIBS="$(dirname "$(dirname "$SDK_CMAKE")")"
+          SDK_ROOT="$(dirname "$(dirname "$(dirname "$SDK_LIBS")")")"
+          TOOL_BIN="$(find "$HOME/psn00bsdk/unpacked" -type f -name mipsel-none-elf-gcc -printf '%h\n' -quit)"
+          if [ -z "$TOOL_BIN" ]; then
+            echo "::error::mipsel-none-elf-gcc was not found in the SDK package."
+            find "$HOME/psn00bsdk/unpacked" -maxdepth 5 -type f | head -n 150
+            exit 1
+          fi
+
+          echo "$SDK_ROOT/bin" >> "$GITHUB_PATH"
+          echo "$TOOL_BIN" >> "$GITHUB_PATH"
+          echo "PSN00BSDK_LIBS=$SDK_LIBS" >> "$GITHUB_ENV"
+          echo "PSN00BSDK_TC=$(dirname "$TOOL_BIN")" >> "$GITHUB_ENV"
+
+          echo "SDK CMake: $SDK_CMAKE"
+          echo "SDK libraries: $SDK_LIBS"
+          echo "Compiler: $TOOL_BIN/mipsel-none-elf-gcc"
+
+      - name: Verify SDK tools
+        run: |
+          command -v mipsel-none-elf-gcc
+          mipsel-none-elf-gcc --version
+          test -f "$PSN00BSDK_LIBS/cmake/sdk.cmake"
+          command -v mkpsxiso
+          command -v elf2x
 
       - name: Configure
         run: cmake --preset default
@@ -49,8 +65,9 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Verify disc image
+      - name: Verify disc files
         run: |
+          find build -maxdepth 2 -type f -print
           test -f build/ps3_system_355.bin
           test -f build/ps3_system_355.cue
 
